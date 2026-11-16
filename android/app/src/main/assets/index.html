@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QSO Logger</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#1c1f24; --muted:#6b7280; --accent:#2563eb; --line:#e5e7eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111418; --card:#1b1f25; --ink:#e7e9ee; --muted:#9aa3b2; --accent:#60a5fa; --line:#2b313a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px 20px; border-bottom:1px solid var(--line); background:var(--card); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  h1 { font-size:20px; margin:0; }
+  main { max-width:1000px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  h2 { font-size:16px; margin:0 0 12px; }
+  form { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; }
+  label { display:flex; flex-direction:column; font-size:12px; color:var(--muted); gap:4px; }
+  input, select, textarea { font:inherit; padding:8px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); }
+  input:focus { outline:2px solid var(--accent); outline-offset:0; }
+  .actions { grid-column:1/-1; display:flex; gap:8px; flex-wrap:wrap; }
+  button { font:inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.danger { color:#dc2626; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .toolbar input { flex:1; min-width:160px; }
+  .table-wrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  .empty { color:var(--muted); text-align:center; padding:24px; }
+  .count { color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>QSO Logger</h1>
+  <div class="count" id="count"></div>
+</header>
+
+<main>
+  <section>
+    <h2>บันทึก QSO ใหม่</h2>
+    <form id="qso-form" autocomplete="off">
+      <label>วันที่ <input type="date" name="date" required></label>
+      <label>เวลา (UTC) <input type="time" name="time" required></label>
+      <label>Callsign คู่สนทนา <input type="text" name="call" required style="text-transform:uppercase"></label>
+      <label>ความถี่ (MHz) <input type="text" name="freq" inputmode="decimal" placeholder="14.074"></label>
+      <label>โหมด
+        <select name="mode">
+          <option>SSB</option><option>FT8</option><option>FT4</option><option>CW</option>
+          <option>RTTY</option><option>FM</option><option>AM</option><option>Other</option>
+        </select>
+      </label>
+      <label>RST ส่ง <input type="text" name="rst_sent" placeholder="59"></label>
+      <label>RST รับ <input type="text" name="rst_rcvd" placeholder="59"></label>
+      <label>ชื่อ <input type="text" name="name"></label>
+      <label>Grid locator <input type="text" name="grid" placeholder="OK13"></label>
+      <label>QTH <input type="text" name="qth"></label>
+      <label style="grid-column:1/-1">หมายเหตุ <textarea name="notes" rows="2"></textarea></label>
+      <div class="actions">
+        <button type="submit" class="primary">บันทึก</button>
+        <button type="button" id="reset-btn">ล้างฟอร์ม</button>
+      </div>
+    </form>
+  </section>
+
+  <section>
+    <div class="toolbar">
+      <input type="search" id="search" placeholder="ค้นหา callsign, ชื่อ, grid, โหมด...">
+      <button id="export-btn">ส่งออก ADIF</button>
+      <button id="export-csv-btn">ส่งออก CSV</button>
+      <button id="import-btn">นำเข้า ADIF</button>
+      <input type="file" id="import-file" accept=".adi,.adif" hidden>
+      <button id="clear-btn" class="danger">ลบทั้งหมด</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>วันที่</th><th>เวลา UTC</th><th>Call</th><th>ความถี่</th><th>โหมด</th><th>RST</th><th>ชื่อ</th><th>Grid</th><th>หมายเหตุ</th><th></th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty" id="empty">ยังไม่มีการบันทึก QSO</div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  const KEY = "qso-logger.v1";
+  let qsos = load();
+
+  const $ = (id) => document.getElementById(id);
+  const form = $("qso-form");
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(KEY)) || []; }
+    catch { return []; }
+  }
+  function save() { localStorage.setItem(KEY, JSON.stringify(qsos)); }
+
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+  }
+
+  function setDefaultDateTime() {
+    const now = new Date();
+    form.date.value = now.toISOString().slice(0, 10);
+    form.time.value = now.toISOString().slice(11, 16);
+  }
+
+  function render() {
+    const q = $("search").value.trim().toLowerCase();
+    const list = qsos
+      .slice()
+      .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))
+      .filter((r) => !q || JSON.stringify(r).toLowerCase().includes(q));
+
+    $("rows").innerHTML = list.map((r) => `
+      <tr>
+        <td>${esc(r.date)}</td>
+        <td>${esc(r.time)}</td>
+        <td><strong>${esc(r.call)}</strong></td>
+        <td>${esc(r.freq)}</td>
+        <td>${esc(r.mode)}</td>
+        <td>${esc(r.rst_sent)}/${esc(r.rst_rcvd)}</td>
+        <td>${esc(r.name)}</td>
+        <td>${esc(r.grid)}</td>
+        <td>${esc(r.notes)}</td>
+        <td><button data-del="${esc(r.id)}" class="danger">ลบ</button></td>
+      </tr>`).join("");
+
+    $("empty").style.display = list.length ? "none" : "block";
+    $("count").textContent = `${qsos.length} QSO ทั้งหมด`;
+  }
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const rec = { id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()) };
+    for (const [k, v] of fd.entries()) rec[k] = String(v).trim();
+    rec.call = rec.call.toUpperCase();
+    qsos.push(rec);
+    save();
+    form.call.value = ""; form.freq.value = ""; form.rst_sent.value = ""; form.rst_rcvd.value = "";
+    form.name.value = ""; form.grid.value = ""; form.qth.value = ""; form.notes.value = "";
+    form.call.focus();
+    render();
+  });
+
+  $("reset-btn").addEventListener("click", () => { form.reset(); setDefaultDateTime(); });
+
+  $("rows").addEventListener("click", (e) => {
+    const id = e.target.dataset.del;
+    if (!id) return;
+    if (!confirm("ลบรายการนี้?")) return;
+    qsos = qsos.filter((r) => r.id !== id);
+    save(); render();
+  });
+
+  $("search").addEventListener("input", render);
+
+  $("clear-btn").addEventListener("click", () => {
+    if (!qsos.length) return;
+    if (!confirm("ลบ QSO ทั้งหมด? การกระทำนี้ย้อนกลับไม่ได้")) return;
+    qsos = []; save(); render();
+  });
+
+  // ---------- ADIF ----------
+  function adifField(name, value) {
+    if (value === undefined || value === "") return "";
+    const v = String(value);
+    return `<${name}:${v.length}>${v}`;
+  }
+  function toADIF(list) {
+    const header = "QSO Logger export\n<ADIF_VER:5>3.1.4\n<PROGRAMID:10>QSO-Logger\n<EOH>\n\n";
+    const body = list.map((r) => {
+      const d = r.date.replace(/-/g, "");
+      const t = r.time.replace(/:/g, "") + "00".slice(0, 0);
+      return [
+        adifField("CALL", r.call),
+        adifField("QSO_DATE", d),
+        adifField("TIME_ON", t.slice(0, 4)),
+        adifField("FREQ", r.freq),
+        adifField("MODE", r.mode),
+        adifField("RST_SENT", r.rst_sent),
+        adifField("RST_RCVD", r.rst_rcvd),
+        adifField("NAME", r.name),
+        adifField("GRIDSQUARE", r.grid),
+        adifField("QTH", r.qth),
+        adifField("COMMENT", r.notes),
+        "<EOR>"
+      ].filter(Boolean).join(" ") + "\n";
+    }).join("");
+    return header + body;
+  }
+
+  function parseADIF(text) {
+    const eoh = text.search(/<eoh>/i);
+    const records = (eoh >= 0 ? text.slice(eoh + 5) : text).split(/<eor>/i);
+    const out = [];
+    const map = { CALL:"call", QSO_DATE:"date", TIME_ON:"time", FREQ:"freq", MODE:"mode",
+      RST_SENT:"rst_sent", RST_RCVD:"rst_rcvd", NAME:"name", GRIDSQUARE:"grid", QTH:"qth", COMMENT:"notes" };
+    for (const chunk of records) {
+      const rec = {};
+      const re = /<(\w+):(\d+)(?::\w+)?>/g;
+      let m;
+      while ((m = re.exec(chunk))) {
+        const key = m[1].toUpperCase();
+        const len = parseInt(m[2], 10);
+        const val = chunk.substr(re.lastIndex, len);
+        re.lastIndex += len;
+        if (map[key]) rec[map[key]] = val.trim();
+      }
+      if (!rec.call) continue;
+      if (rec.date && rec.date.length === 8) rec.date = `${rec.date.slice(0,4)}-${rec.date.slice(4,6)}-${rec.date.slice(6,8)}`;
+      if (rec.time && rec.time.length >= 4) rec.time = `${rec.time.slice(0,2)}:${rec.time.slice(2,4)}`;
+      rec.call = rec.call.toUpperCase();
+      rec.id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
+      ["date","time","freq","mode","rst_sent","rst_rcvd","name","grid","qth","notes"].forEach((k) => rec[k] = rec[k] || "");
+      out.push(rec);
+    }
+    return out;
+  }
+
+  function download(name, text, type) {
+    const blob = new Blob([text], { type });
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement("a"), { href: url, download: name });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  $("export-btn").addEventListener("click", () => {
+    if (!qsos.length) return alert("ยังไม่มีข้อมูลให้ส่งออก");
+    download(`qso-${new Date().toISOString().slice(0,10)}.adi`, toADIF(qsos), "text/plain");
+  });
+
+  $("export-csv-btn").addEventListener("click", () => {
+    if (!qsos.length) return alert("ยังไม่มีข้อมูลให้ส่งออก");
+    const cols = ["date","time","call","freq","mode","rst_sent","rst_rcvd","name","grid","qth","notes"];
+    const esc2 = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const csv = [cols.join(",")].concat(qsos.map((r) => cols.map((c) => esc2(r[c])).join(","))).join("\n");
+    download(`qso-${new Date().toISOString().slice(0,10)}.csv`, "﻿" + csv, "text/csv");
+  });
+
+  $("import-btn").addEventListener("click", () => $("import-file").click());
+  $("import-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const parsed = parseADIF(await file.text());
+    qsos = qsos.concat(parsed);
+    save(); render();
+    alert(`นำเข้า ${parsed.length} รายการ`);
+    e.target.value = "";
+  });
+
+  setDefaultDateTime();
+  render();
+})();
+</script>
+</body>
+</html>

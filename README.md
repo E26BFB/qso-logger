@@ -12,6 +12,11 @@
 ## วิธีใช้
 เปิดไฟล์ `index.html` ในเบราว์เซอร์ ไม่ต้องติดตั้งอะไรเพิ่ม
 
+## Android APK
+โฟลเดอร์ `android/` เป็นโปรเจกต์ WebView ที่ห่อ `index.html` ไว้ GitHub Actions (`.github/workflows/build-apk.yml`) จะ build APK ทุกครั้งที่ push ไป `main` ดาวน์โหลดได้จากแท็บ Actions > ผลการรัน > Artifacts (`qso-logger-debug-apk`)
+
+หมายเหตุ: ไฟล์ `android/app/src/main/assets/index.html` เป็นสำเนาของ `index.html` ที่ราก ถ้าแก้ไฟล์ใดไฟล์หนึ่ง ต้องคัดลอกให้ตรงกัน
+
 ## หมายเหตุ
 - เวลาในฟอร์มตั้งค่าเป็น UTC ตามมาตรฐาน amateur radio
 - ข้อมูลไม่ได้ซิงก์ข้ามอุปกรณ์ ให้ใช้การส่งออก ADIF เพื่อย้ายข้อมูล
